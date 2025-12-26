@@ -62,7 +62,6 @@ class WorkerAgent(mesa.Agent):
         self.revenue = 0 
 
     def move(self):
-        # UBI Recipients and Displaced do NOT move
         if self.pos is None or self.state == DISPLACED or self.state == UBI_RECIPIENT:
             return
 
@@ -73,11 +72,8 @@ class WorkerAgent(mesa.Agent):
         valid_steps = []
         for pos in possible_steps:
             cell_contents = self.model.grid.get_cell_list_contents(pos)
-            
-            # GHOST LOGIC: 
-            # A cell is valid if it is EMPTY or only contains GHOSTS (UBI_RECIPIENT)
+            # Ghost Logic: Blocked only if not UBI
             blocking_agents = [a for a in cell_contents if a.state != UBI_RECIPIENT]
-            
             if not blocking_agents:
                 valid_steps.append(pos)
 
@@ -92,7 +88,6 @@ class WorkerAgent(mesa.Agent):
         # --- ECONOMICS ---
         if self.state != AUTOMATED:
             self.wealth += self.model.ubi_payment
-
         if self.state != AUTOMATED:
             self.wealth -= self.model.cost_of_living
         else:
@@ -103,6 +98,8 @@ class WorkerAgent(mesa.Agent):
             self.wealth += net_income
 
         # --- BEHAVIOR ---
+        
+        # CASE 0: UBI RECIPIENT
         if self.state == UBI_RECIPIENT:
             if self.wealth <= 0:
                 self.model.total_removed += 1  
@@ -111,9 +108,11 @@ class WorkerAgent(mesa.Agent):
                 self.model.schedule.remove(self)
             return
 
+        # CASE 1: DISPLACED
         elif self.state == DISPLACED:
             cellmates = self.model.grid.get_cell_list_contents(self.pos)
             active_squatters = [a for a in cellmates if a.state != DISPLACED and a.state != UBI_RECIPIENT and a != self]
+            
             if not active_squatters and self.random.random() < self.model.hiring_chance:
                 if self.random.random() < self.model.upskill_chance:
                     self.state = AUGMENTED
@@ -124,10 +123,12 @@ class WorkerAgent(mesa.Agent):
                 self.model.retrained_this_step += 1 
                 return 
             
+        # CASE 2: AUTOMATED
         elif self.state == AUTOMATED:
             self.move()
             neighbors = self.model.grid.get_neighbors(self.pos, moore=True, include_center=False)
             auto_neighbors = [n for n in neighbors if n.state == AUTOMATED]
+            
             if len(auto_neighbors) >= self.model.combination_threshold:
                 target = self.random.choice(auto_neighbors)
                 self.revenue += target.revenue 
@@ -137,6 +138,7 @@ class WorkerAgent(mesa.Agent):
                 self.model.schedule.remove(target)
                 return 
             
+        # CASE 3: WORKERS
         else:
             self.move()
             current_wage = 0
@@ -159,8 +161,16 @@ class WorkerAgent(mesa.Agent):
             n_automated = len([n for n in neighbors if n.state == AUTOMATED])
             robot_neighbors = [n for n in neighbors if n.state == AUTOMATED]
 
+            # --- EFFICIENCY SQUEEZE LOGIC ---
             if self.state == HUMAN and n_augmented >= self.model.adopt_human_augmented_thresh:
-                if self.random.random() < self.model.adopt_human_augmented_prob:
+                # 1. Check for Forced Displacement (The Slider)
+                if self.random.random() < self.model.human_displacement_chance:
+                    self.state = DISPLACED
+                    self.displaced_by = AUGMENTED
+                    self.model.displaced_this_step += 1
+                    return
+                # 2. Check for Adoption
+                elif self.random.random() < self.model.adopt_human_augmented_prob:
                     self.state = AUGMENTED
                     return
 
@@ -181,7 +191,7 @@ class WorkerAgent(mesa.Agent):
                 return
 
 # ==========================================
-# 4. MODEL CLASS (UPDATED REVENUE INIT)
+# 4. MODEL CLASS
 # ==========================================
 
 class EvolutionaryModel(mesa.Model):
@@ -191,6 +201,10 @@ class EvolutionaryModel(mesa.Model):
                  seeds_human=300, seeds_augmented=20, seeds_automated=20, 
                  initial_ubi_fraction=0.0, 
                  adopt_human_augmented_thresh=3, adopt_human_augmented_prob=0.3,
+                 
+                 # NEW SLIDER VARIABLE
+                 human_displacement_chance=0.1,
+                 
                  automation_threshold=4, automation_chance=0.1,
                  displacement_threshold=2, combination_threshold=2,  
                  hiring_chance=0.30, upskill_chance=0.3,
@@ -214,6 +228,10 @@ class EvolutionaryModel(mesa.Model):
 
         self.adopt_human_augmented_thresh = adopt_human_augmented_thresh
         self.adopt_human_augmented_prob = adopt_human_augmented_prob
+        
+        # Store the new variable
+        self.human_displacement_chance = human_displacement_chance
+        
         self.automation_threshold = automation_threshold
         self.automation_chance = automation_chance
         self.displacement_threshold = displacement_threshold
@@ -276,18 +294,14 @@ class EvolutionaryModel(mesa.Model):
                 a = WorkerAgent(current_agent_count, self)
                 a.state = state_type
                 
-                # --- LOGIC UPDATE: ROBOT INITIALIZATION ---
                 if state_type == AUTOMATED:
-                    # 1. REVENUE: Starts high (Legacy Capital) to fund UBI
                     a.revenue = self.wage_augmented
-                    # 2. WEALTH: Starts at 0 (Machines have no savings)
                     a.wealth = 0 
-                # ------------------------------------------
 
                 x, y = all_coords.pop()
                 self.schedule.add(a)
                 self.grid.place_agent(a, (x, y))
-                current_agent_count += 1            
+                current_agent_count += 1
 
         place_chunk(AUTOMATED, self.seeds_automated)
         place_chunk(AUGMENTED, self.seeds_augmented)
@@ -334,7 +348,6 @@ def agent_portrayal(agent):
         "Layer": 1, "Color": p["color"]
     }
     
-    # --- UBI (LAYER 0 - BACKGROUND) ---
     if agent.state == UBI_RECIPIENT:
         portrayal["Shape"] = "rect"
         portrayal["Layer"] = 0        
@@ -342,20 +355,17 @@ def agent_portrayal(agent):
         portrayal["h"] = 1.0
         portrayal["stroke_color"] = "#228B22" 
     
-    # --- AUTOMATED (LAYER 2 - TOP) ---
     elif agent.state == AUTOMATED:
         portrayal["Layer"] = 2
         portrayal["r"] = 0.5
         portrayal["Color"] = "#ff0000"
         
-    # --- DISPLACED (LAYER 1 - MIDDLE) ---
     elif agent.state == DISPLACED:
         portrayal["Shape"] = "rect"
         portrayal["Layer"] = 1
         portrayal["w"] = 0.75
         portrayal["h"] = 0.75
         
-    # --- WORKERS (LAYER 1 - MIDDLE) ---
     else:
         portrayal["Layer"] = 1
         if p["shape"] == "rect": 
@@ -385,6 +395,10 @@ model_params = {
 
     "adopt_human_augmented_thresh": mesa.visualization.Slider("[Trans] Human->Aug Neighbors", 3, 1, 8, 1),
     "adopt_human_augmented_prob": mesa.visualization.Slider("[Trans] Human->Aug Chance", 0.3, 0.0, 1.0, 0.05),
+    
+    # NEW SLIDER HERE
+    "human_displacement_chance": mesa.visualization.Slider("[Trans] Efficiency Disp. Chance", 0.1, 0.0, 1.0, 0.05),
+
     "automation_threshold": mesa.visualization.Slider("[Trans] Aug->Auto Density", 4, 1, 8, 1),
     "automation_chance": mesa.visualization.Slider("[Trans] Aug->Auto Chance", 0.1, 0.0, 1.0, 0.05),
     "displacement_threshold": mesa.visualization.Slider("[Trans] Displacement Pressure", 2, 1, 8, 1),
