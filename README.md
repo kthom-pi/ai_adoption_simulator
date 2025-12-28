@@ -23,7 +23,7 @@ This simulation models how AI and automation technologies spread through an econ
 
 1. Clone this repository:
 ```bash
-git clone https://github.com/yourusername/ai_adoption_simulator.git
+git clone https://github.com/kthom-pi/ai_adoption_simulator.git
 cd ai_adoption_simulator
 ```
 
