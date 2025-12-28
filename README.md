@@ -401,7 +401,7 @@ ai_adoption_simulator/
 - Movement and neighbor detection
 - Economic actions (earning, spending)
 
-## Running Batch Experiments
+### Running Batch Experiments
 
 ### Export Data from Interactive Mode
 
