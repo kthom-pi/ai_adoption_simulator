@@ -18,6 +18,7 @@ This simulation models how AI and automation technologies spread through an econ
 - [Interpreting the Graphs](#interpreting-the-graphs)
 - [Economic Experiments](#economic-experiments)
 - [Technical Details](#technical-details)
+- [Running Batch Experiments](#running-batch-experiments)
 
 ## Installation
 
@@ -401,15 +402,85 @@ ai_adoption_simulator/
 - Movement and neighbor detection
 - Economic actions (earning, spending)
 
-### Data Collection
-All metrics are collected via Mesa's `DataCollector` and available for export:
+## Running Batch Experiments
+
+### Export Data from Interactive Mode
+
+While running the interactive simulation, you can export data programmatically:
+
 ```python
-model = EvolutionaryModel()
+from model import EvolutionaryModel
+
+# Create and run model
+model = EvolutionaryModel(robot_tax_rate=0.5, seeds_automated=50)
 for i in range(100):
     model.step()
-    
-df = model.datacollector.get_model_vars_dataframe()
-df.to_csv('simulation_results.csv')
+
+# Export to CSV
+model_data = model.datacollector.get_model_vars_dataframe()
+agent_data = model.datacollector.get_agent_vars_dataframe()
+
+model_data.to_csv('model_results.csv')
+agent_data.to_csv('agent_results.csv')
+```
+
+### Run Pre-defined Experiments
+
+Run batch experiments using the `batch_run.py` script:
+
+```bash
+python batch_run.py
+```
+
+This will run the default UBI viability experiment and save results to the `results/` directory.
+
+### Available Pre-defined Experiments
+
+Edit `batch_run.py` and uncomment experiments:
+
+```python
+if __name__ == "__main__":
+    # experiment_ubi_viability()
+    # experiment_adoption_cascades()
+    # experiment_displacement_threshold()
+    experiment_wealth_inequality()  # Run this one
+```
+
+### Run Custom Experiments
+
+Create your own experiments:
+
+```python
+from batch_run import experiment_custom
+
+experiment_custom({
+    "robot_tax_rate": 0.3,
+    "initial_ubi_fraction": 0.1,
+    "wage_augmented": 3.0,
+    "seeds_automated": 40
+}, steps=1000, name="my_experiment")
+```
+
+### Output Files
+
+Results are saved to `results/` directory with timestamps:
+- `{experiment_name}_model_{timestamp}.csv` - Model-level metrics per step
+- `{experiment_name}_agents_{timestamp}.csv` - Agent-level data per step
+
+**Model CSV columns:**
+- All population counts (Human, Augmented, Automated, Displaced, UBI Recipients)
+- All wealth metrics (TotalWealth_Human, TotalWealth_Augmented, etc.)
+- Flow metrics (Fired, Hired, Removed per step)
+- Policy metrics (UBI per person, Cost of Living)
+- All input parameters (for comparison across experiments)
+
+**Agent CSV columns:**
+- Agent ID
+- Step number
+- State (0=Human, 1=Augmented, 2=Automated, 3=Displaced, 4=UBI)
+- Wealth
+- Revenue (for automated agents)
+- Position on grid
 ```
 
 ### Customization
@@ -429,10 +500,10 @@ MIT License - See LICENSE file for details
 If you use this simulator in research, please cite:
 ```
 @software{ai_adoption_simulator,
-  author = {Your Name},
+  author = {Kenneth Thomas},
   title = {AI Adoption Simulator},
   year = {2025},
-  url = {https://github.com/yourusername/ai_adoption_simulator}
+  url = {https://github.com/kthom-pi/ai_adoption_simulator}
 }
 ```
 
