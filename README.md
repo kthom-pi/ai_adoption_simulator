@@ -18,7 +18,6 @@ This simulation models how AI and automation technologies spread through an econ
 - [Interpreting the Graphs](#interpreting-the-graphs)
 - [Economic Experiments](#economic-experiments)
 - [Technical Details](#technical-details)
-- [Running Batch Experiments](#running-batch-experiments)
 
 ## Installation
 
