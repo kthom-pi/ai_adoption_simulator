@@ -480,7 +480,7 @@ Results are saved to `results/` directory with timestamps:
 - Wealth
 - Revenue (for automated agents)
 - Position on grid
-```
+
 
 ### Customization
 To add new agent types or behaviors:
