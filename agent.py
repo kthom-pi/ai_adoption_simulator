@@ -33,9 +33,15 @@ class WorkerAgent(mesa.Agent):
         if self.pos is None:
             return
 
-        # --- ECONOMICS ---
+        # --- ECONOMICS (UPDATED SPLIT LOGIC) ---
         if self.state != AUTOMATED:
-            self.wealth += self.model.ubi_payment
+            if self.state == UBI_RECIPIENT:
+                # Tier 1: The "Opt-Out" Share
+                self.wealth += self.model.ubi_payout_opt_out
+            else:
+                # Tier 2: The "Citizen Dividend" (Workers/Displaced)
+                self.wealth += self.model.ubi_payout_worker
+
         if self.state != AUTOMATED:
             self.wealth -= self.model.cost_of_living
         else:
@@ -104,29 +110,42 @@ class WorkerAgent(mesa.Agent):
                 self.model.schedule.remove(self)
                 return 
 
-            neighbors = self.model.grid.get_neighbors(self.pos, moore=True, include_center=False)
+            neighbors = self.model.grid.get_neighbors(self.pos, moore=True, include_center=False, radius=2)
             n_augmented = len([n for n in neighbors if n.state == AUGMENTED])
             n_automated = len([n for n in neighbors if n.state == AUTOMATED])
             robot_neighbors = [n for n in neighbors if n.state == AUTOMATED]
 
             # --- EFFICIENCY SQUEEZE LOGIC ---
             if self.state == HUMAN and n_augmented >= self.model.adopt_human_augmented_thresh:
-                # 1. Check for Forced Displacement (The Slider)
                 if self.random.random() < self.model.human_displacement_chance:
                     self.state = DISPLACED
                     self.displaced_by = AUGMENTED
                     self.model.displaced_this_step += 1
                     return
-                # 2. Check for Adoption
                 elif self.random.random() < self.model.adopt_human_augmented_prob:
                     self.state = AUGMENTED
                     return
 
+            # --- THE FIX STARTS HERE ---
             if self.state == AUGMENTED and n_augmented >= self.model.automation_threshold:
                 if self.random.random() < self.model.automation_chance:
-                    self.state = AUTOMATED
-                    self.revenue = self.model.wage_augmented 
+                    # 1. Spawn the new Robot (Capital)
+                    new_id = self.model.get_next_id()
+                    robot = WorkerAgent(new_id, self.model)
+                    robot.state = AUTOMATED
+                    robot.revenue = self.model.wage_augmented # Inherits high productivity
+                    robot.wealth = 0 # Fresh machine (starts with 0 wealth)
+                    
+                    # Place Robot at the same location as its creator
+                    self.model.grid.place_agent(robot, self.pos)
+                    self.model.schedule.add(robot)
+                    
+                    # 2. Downgrade the Human (Labor)
+                    self.state = DISPLACED
+                    self.displaced_by = AUTOMATED
+                    self.model.displaced_this_step += 1
                     return
+            # --- THE FIX ENDS HERE ---
 
             if n_automated >= self.model.displacement_threshold:
                 self.state = DISPLACED

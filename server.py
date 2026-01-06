@@ -89,6 +89,9 @@ model_params = {
     "seeds_automated": mesa.visualization.Slider("[Seeds] Automated", 20, 0, 50, 1),
 
     "robot_tax_rate": mesa.visualization.Slider("[Policy] Robot Tax Rate", 0.0, 0.0, 1.0, 0.05),
+    
+    # --- NEW SLIDER ---
+    "ubi_class_tax_share": mesa.visualization.Slider("[Policy] Tax % to UBI Class", 0.5, 0.0, 1.0, 0.05),
 
     "wage_human": mesa.visualization.Slider("[Econ] Wage: Human", 1.0, 0.0, 10.0, 0.1),
     "wage_augmented": mesa.visualization.Slider("[Econ] Wage: Augmented", 2.5, 0.0, 10.0, 0.1),
@@ -111,7 +114,7 @@ model_params = {
 # VISUALIZATION ELEMENTS
 # ==========================================
 
-grid = mesa.visualization.CanvasGrid(agent_portrayal, 20, 20, 500, 500)
+grid = mesa.visualization.CanvasGrid(agent_portrayal, 30, 30, 500, 500)
 leaderboard = LeaderboardElement()
 
 chart_pop = mesa.visualization.ChartModule([
@@ -143,8 +146,10 @@ chart_wealth = mesa.visualization.ChartModule([
     {"Label": "Total Wealth", "Color": "Black"}
 ], canvas_height=150, canvas_width=500)
 
+# --- UPDATED FISCAL CHART ---
 chart_fiscal = mesa.visualization.ChartModule([
-    {"Label": "UBI (Per Person)", "Color": "#00ff00"},
+    {"Label": "UBI (Opt-Out)", "Color": "#00ff00"},    # Bright Green for Welfare
+    {"Label": "UBI (Worker Div)", "Color": "#0000ff"}, # Blue for Worker Dividend
     {"Label": "Cost of Living", "Color": "#ff0000"} 
 ], canvas_height=150, canvas_width=500)
 
