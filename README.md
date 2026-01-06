@@ -47,9 +47,9 @@ The server will launch at `http://127.0.0.1:8521` where you can interact with th
 - Traditional workers performing manual labor
 - **Income**: `wage_human` per step (default: $1.0)
 - **Costs**: `cost_of_living` per step (default: $1.0)
-- **Movement**: Active - moves randomly to adjacent cells
+- **Movement**: Active - moves randomly to adjacent cells (see [Movement Mechanics](#movement-mechanics))
 - **Transitions**:
-  - → AI Augmented (influenced by augmented neighbors)
+  - → AI Augmented (influenced by nearby augmented neighbors; see [Square Influence](#square-influence-radius-2-moore-in-depth))
   - → Displaced (crowded out by augmented workers or automated systems)
 
 ### 2. **AI Augmented Workers** (Blue Circles)
@@ -57,28 +57,30 @@ The server will launch at `http://127.0.0.1:8521` where you can interact with th
 - **Income**: `wage_augmented` per step (default: $2.5)
 - **Costs**: `cost_of_living` per step
 - **Movement**: Active - moves randomly to adjacent cells
-- **Productivity**: 2.5x more productive than human workers
+- **Productivity**: Higher wage than human workers
 - **Transitions**:
-  - → Fully Automated (high automation pressure from neighbors)
+  - → **Automation event** (see “conservation of labor agents” below)
   - → Displaced (replaced by automated systems)
 
 ### 3. **Fully Automated** (Red Circles)
-- Autonomous AI systems/robots that replaced workers
-- **Income**: `revenue` (inherited from displaced worker's wage)
-- **Costs**: None (machines don't consume)
-- **Tax**: Subject to `robot_tax_rate` on revenue
+- Autonomous AI systems/robots (capital)
+- **Income**: `revenue` per step (taxed)
+  - Seeded automated agents start with `revenue = wage_augmented` and `wealth = 0` (see [`model.EvolutionaryModel.__init__`](model.py)).
+  - Automated agents can also accumulate additional revenue via displacement “loot sharing” from nearby displaced workers (see [`agent.WorkerAgent.step`](agent.py)).
+- **Costs**: None (machines don’t pay living costs)
+- **Tax**: Subject to `robot_tax_rate` on revenue; taxes accumulate in `government_pot` (see [`agent.WorkerAgent.step`](agent.py))
 - **Movement**: Active - moves randomly to adjacent cells
 - **Special Ability**: Can merge with nearby automated agents (capital consolidation)
 - **Transitions**:
   - → Merged entity (combines with nearby automated agents)
 
 ### 4. **Displaced Workers** (Yellow Squares)
-- Workers who lost their jobs to automation
+- Workers who lost their jobs to automation/pressure
 - **Income**: Transfers/UBI only
 - **Costs**: `cost_of_living` per step (burning savings)
 - **Movement**: None - stationary
 - **Transitions**:
-  - → Human or AI Augmented (rehired if space available)
+  - → Human or AI Augmented (rehired if their cell is not occupied by active workers; see [`agent.WorkerAgent.step`](agent.py))
   - → Removed (if wealth reaches zero)
 
 ### 5. **UBI Recipients** (Green Squares)
@@ -86,31 +88,33 @@ The server will launch at `http://127.0.0.1:8521` where you can interact with th
 - **Income**: Transfers/UBI only
 - **Costs**: `cost_of_living` per step
 - **Movement**: None - stationary
-- **Special**: Acts as "ghost" - doesn't block other agents' movement
+- **Special**: Acts as a “ghost” for movement (doesn’t block other agents)
 - **Transitions**:
   - → Removed (if wealth reaches zero)
 
 ## How It Works
 
 ### Grid Structure
-- The simulation runs on a **20x20 grid** (400 cells)
-- Each cell represents an **economic position** or job opportunity
-- Agents can occupy the same cell (except active workers block each other)
+- The simulation runs on a **30x30 toroidal grid** (900 cells).
+  - Visualization grid is configured in [server.py](server.py).
+  - Model grid defaults are configured in [`model.EvolutionaryModel.__init__`](model.py) (`width=30`, `height=30`).
+- Each cell represents an **economic position** or job opportunity.
+- Agents can technically share cells (Mesa `MultiGrid`), but **movement rules restrict “active” agents from stepping into cells occupied by any non-UBI agent** (see [Movement Mechanics](#movement-mechanics)).
 
 ### Step Sequence
 
 Each simulation step follows this sequence:
 
 #### 1. **Economics Phase** (All Agents)
-- **Robot Tax Collection**: Automated agents pay `robot_tax_rate` into a government pool (`government_pot`)
-- **Transfers / UBI Distribution (NEW: configurable split)**:
+- **Robot Tax Collection**: Automated agents pay `robot_tax_rate` into a government pool (`government_pot`) (see [`agent.WorkerAgent.step`](agent.py)).
+- **Transfers / UBI Distribution (configurable split)**:
   - The government pool is split between two recipient groups:
     - **UBI group**: agents in state `UBI_RECIPIENT`
     - **Worker dividend group**: other non-automated agents (typically `HUMAN`, `AUGMENTED`, `DISPLACED`)
-  - The split is controlled by **`ubi_class_tax_share`**:
+  - The split is controlled by **`ubi_class_tax_share`** (see [`model.EvolutionaryModel.step`](model.py)):
     - `ubi_class_tax_share = 0.70` means **70%** of the pool is shared among UBI recipients
     - The remaining **30%** is shared among the other non-automated agents
-- **Cost of Living**: All non-automated agents pay living costs
+- **Cost of Living**: All non-automated agents pay living costs.
 - **Wage Payment**:
   - Human workers earn `wage_human`
   - Augmented workers earn `wage_augmented`
@@ -123,14 +127,14 @@ Each simulation step follows this sequence:
 - No other actions
 
 **For Displaced Workers:**
-- Check if current cell is empty (no active workers)
-- If empty, attempt rehiring:
+- Check if current cell is free of **active squatters** (agents that are *not* `DISPLACED` and *not* `UBI_RECIPIENT`)
+- If free, attempt rehiring:
   - `hiring_chance` probability of getting rehired
   - If rehired, `upskill_chance` determines if they become Augmented or Human
-- If wealth ≤ 0 → Remove from simulation
+- (Removal happens for UBI recipients; displaced removal happens in the worker logic branch when applicable—see [`agent.WorkerAgent.step`](agent.py))
 
 **For Automated Agents:**
-1. **Move** to random adjacent cell
+1. **Move** to a random adjacent cell
 2. Count automated neighbors (Moore neighborhood, 8 cells)
 3. If automated neighbors ≥ `combination_threshold`:
    - Merge with random automated neighbor
@@ -138,10 +142,10 @@ Each simulation step follows this sequence:
    - Remove merged agent
 
 **For Workers (Human & Augmented):**
-1. **Move** to random adjacent cell
+1. **Move** to a random adjacent cell
 2. Earn wage for this step
 3. Check if wealth ≤ 0 → Remove from simulation
-4. Count neighbors by type
+4. Compute **square influence** (radius-2 Moore neighborhood; see next section)
 5. **Check transition conditions:**
 
    **Human Workers:**
@@ -149,17 +153,94 @@ Each simulation step follows this sequence:
      - Roll `human_displacement_chance`: → Displaced (efficiency squeeze)
      - Else roll `adopt_human_augmented_prob`: → Augmented (adoption)
 
-   **Augmented Workers:**
-   - If augmented neighbors ≥ `automation_threshold`:
-     - Roll `automation_chance`: → Automated
+   **Augmented Workers (Automation + “conservation of labor agents”):**
+   - If augmented neighbors ≥ `automation_threshold` and roll `automation_chance` succeeds:
+     - **Spawn** a new `AUTOMATED` agent at the same location
+     - Convert the original augmented worker to `DISPLACED`
+     - New robot IDs are allocated via [`model.EvolutionaryModel.get_next_id`](model.py)
+     - Implemented in [`agent.WorkerAgent.step`](agent.py)
 
    **Both:**
    - If automated neighbors ≥ `displacement_threshold`:
      - → Displaced
-     - Worker's wage redistributed to neighboring robots as revenue
+     - Worker’s current wage is redistributed as added `revenue` to the nearby robots considered in the same square influence neighborhood
 
 #### 3. **Data Collection**
-- Record all metrics for graphs and analysis
+- Record all metrics for graphs and analysis (see [`model.EvolutionaryModel.datacollector`](model.py)).
+
+---
+
+### Square Influence (Radius-2 Moore) — In Depth
+
+State transitions for **Human** and **Augmented** workers use an expanded “square” neighborhood (not just immediate adjacency). This is calculated in [`agent.WorkerAgent.step`](agent.py):
+
+```py
+neighbors = self.model.grid.get_neighbors(
+    self.pos, moore=True, include_center=False, radius=2
+)
+```
+
+#### 1) What “radius=2 Moore” means (geometrically)
+
+- **Moore neighborhood** includes diagonals (a square, not a plus-shape).
+- With `radius=2`, you get a **5×5 square** centered on the agent.
+- With `include_center=False`, the agent’s own cell is excluded.
+
+So the maximum number of neighbor *cells* considered is:
+
+$$
+(2r+1)^2 - 1 = (2\cdot 2 + 1)^2 - 1 = 5^2 - 1 = 24
+$$
+
+Because the grid is toroidal (`MultiGrid(..., torus=True)` in [`model.EvolutionaryModel.__init__`](model.py)), neighborhoods that would spill “off the edge” wrap around to the opposite side.
+
+#### 2) What is counted from that neighborhood
+
+From this set of neighbor agents, the worker computes:
+
+- $n_{aug}$: number of neighbors in state `AUGMENTED`
+- $n_{auto}$: number of neighbors in state `AUTOMATED`
+
+Conceptually:
+
+$$
+n_{aug} = \sum_{j \in \mathcal{N}_{r=2}} \mathbf{1}[state(j)=AUGMENTED]
+\qquad
+n_{auto} = \sum_{j \in \mathcal{N}_{r=2}} \mathbf{1}[state(j)=AUTOMATED]
+$$
+
+where $\mathcal{N}_{r=2}$ is the radius-2 Moore neighborhood and $\mathbf{1}[\cdot]$ is 1 if true else 0.
+
+#### 3) How those counts affect decisions (mechanically)
+
+- **Human “efficiency squeeze” / adoption**
+  - Condition: $n_{aug} \ge \texttt{adopt_human_augmented_thresh}$
+  - Then:
+    - with probability `human_displacement_chance`: Human → Displaced
+    - else with probability `adopt_human_augmented_prob`: Human → Augmented
+
+- **Augmented automation event (capital creation + labor displacement)**
+  - Condition: $n_{aug} \ge \texttt{automation_threshold}$ and Bernoulli(`automation_chance`) succeeds
+  - Then:
+    - create new robot (AUTOMATED) at the same cell
+    - original augmented worker becomes DISPLACED
+
+- **Automation displacement pressure (robots displacing labor)**
+  - Condition: $n_{auto} \ge \texttt{displacement_threshold}$
+  - Then:
+    - worker becomes DISPLACED
+    - their wage is split across robot neighbors (in that same neighborhood) as added robot revenue
+
+#### 4) Practical implications vs the old “adjacent only” influence
+
+Previously, “influence” often meant just the 8 immediately adjacent cells. Now, each worker’s local pressure field can include up to **24** nearby positions, which tends to:
+- increase the likelihood of crossing thresholds (more opportunities to “see” augmented/automated agents),
+- produce broader spatial cascades (mid-range spillovers),
+- reduce dependence on perfect adjacency.
+
+> Note: Movement still uses immediate adjacency (radius 1); it’s the **transition influence** that uses radius 2.
+
+---
 
 ### Movement Mechanics
 
@@ -171,16 +252,18 @@ Each simulation step follows this sequence:
 - ❌ UBI recipients (stationary)
 
 **Movement Pattern:**
-- **Moore neighborhood**: 8 adjacent cells (including diagonals)
+- **Moore neighborhood**: 8 adjacent cells (including diagonals) (see [`agent.WorkerAgent.move`](agent.py))
 - **Random selection**: Agent picks randomly from valid cells
-- **Collision detection**: Cannot move to cells occupied by active workers
-- **Ghost mechanic**: UBI recipients don't block movement
+- **Collision detection**:
+  - An active mover can only step into a cell if it contains **no blocking agents**
+  - The only non-blocking (“ghost”) occupants are `UBI_RECIPIENT` agents
+  - Implemented by filtering out cells with *any* agent whose state is not `UBI_RECIPIENT` in [`agent.WorkerAgent.move`](agent.py)
 
 **Example:**
 ```
 [·] [A] [·]
 [H] [X] [U]  ← X can move to any [·] or [U] cell, but not [A] or [H]
-[·] [D] [·]  ← D (displaced) is also passable
+[·] [D] [·]  ← D blocks movement (not passable), U is passable (ghost)
 ```
 
 ## Parameters Explained
@@ -203,7 +286,7 @@ The interactive UI (Mesa server) exposes parameters with human-friendly labels. 
 |---|---|---:|---|---|
 | `[Policy] % of Total Pop on UBI` | `initial_ubi_fraction` | 0.0 | 0.0-1.0 | Percentage of population starting as UBI recipients |
 | `[Policy] Robot Tax Rate` | `robot_tax_rate` | 0.0 | 0.0-1.0 | Tax rate on automated agent revenue (funds transfers/UBI) |
-| `[Policy] Tax % to UBI Class` | `ubi_class_tax_share` | 0.5 | 0.0-1.0 | **NEW:** Fraction of robot-tax pool allocated to the UBI class (rest goes to other non-automated agents) |
+| `[Policy] Tax % to UBI Class` | `ubi_class_tax_share` | 0.5 | 0.0-1.0 | Fraction of robot-tax pool allocated to the UBI class (rest goes to other non-automated agents) |
 
 ### Seed Parameters
 
@@ -224,13 +307,13 @@ The interactive UI (Mesa server) exposes parameters with human-friendly labels. 
 
 | UI Label | Parameter | Default | Range | Description |
 |---|---|---:|---|---|
-| `[Trans] Human->Aug Neighbors` | `adopt_human_augmented_thresh` | 3 | 1-8 | Augmented neighbors needed to pressure human adoption |
+| `[Trans] Human->Aug Neighbors` | `adopt_human_augmented_thresh` | 3 | 1-8 | Augmented neighbors needed to pressure human adoption (in the radius-2 square influence neighborhood) |
 | `[Trans] Human->Aug Chance` | `adopt_human_augmented_prob` | 0.3 | 0.0-1.0 | Probability human adopts AI when threshold met |
 | `[Trans] Efficiency Disp. Chance` | `human_displacement_chance` | 0.1 | 0.0-1.0 | Chance human is displaced by efficiency pressure |
-| `[Trans] Aug->Auto Density` | `automation_threshold` | 4 | 1-8 | Augmented neighbors needed to trigger automation |
-| `[Trans] Aug->Auto Chance` | `automation_chance` | 0.1 | 0.0-1.0 | Probability augmented worker becomes automated |
-| `[Trans] Displacement Pressure` | `displacement_threshold` | 2 | 1-8 | Automated neighbors needed to displace workers |
-| `[Trans] Auto Combine Density` | `combination_threshold` | 2 | 1-8 | Automated neighbors needed to trigger merger |
+| `[Trans] Aug->Auto Density` | `automation_threshold` | 4 | 1-8 | Augmented neighbors needed to trigger automation (radius-2 square influence neighborhood) |
+| `[Trans] Aug->Auto Chance` | `automation_chance` | 0.1 | 0.0-1.0 | Probability augmented worker triggers an automation event |
+| `[Trans] Displacement Pressure` | `displacement_threshold` | 2 | 1-8 | Automated neighbors needed to displace workers (radius-2 square influence neighborhood) |
+| `[Trans] Auto Combine Density` | `combination_threshold` | 2 | 1-8 | Automated neighbors needed to trigger merger (immediate adjacency) |
 
 ### System Parameters
 
@@ -302,12 +385,13 @@ Tracks transfer/UBI viability relative to living costs.
 ### 6. **Simulation Integrity**
 Agent conservation tracking.
 - **Alive**: Current agent count
-- **Total Removed**: Cumulative deaths/bankruptcies
-- **Merged (Singularity)**: Automated agents consolidated
+- **Total Removed**: Cumulative removals (wealth ≤ 0)
+- **Merged (Singularity)**: Cumulative automated consolidation events
 
 **Interpret:**
-- Alive + Total Removed should equal starting N + UBI seeds
-- High mergers = capital consolidation (monopolization)
+- With the current automation rule, an automation event **spawns a new automated agent** while the original labor agent becomes displaced (see [`agent.WorkerAgent.step`](agent.py)).
+  - This means total agent count can grow above the initial `N` (until merges/removals counteract it).
+- “Conservation” here refers to **labor-agent continuity**: augmented workers aren’t deleted when capital is created; they persist as displaced labor.
 
 ## Economic Experiments
 
@@ -409,12 +493,14 @@ ai_adoption_simulator/
 **`EvolutionaryModel`** (model.py)
 - Manages grid, scheduler, and global economics
 - Handles robot tax collection and transfer/UBI distribution (including split by `ubi_class_tax_share`)
+- Allocates unique IDs for spawned robots via [`model.EvolutionaryModel.get_next_id`](model.py)
 - Collects data for visualization
 
 **`WorkerAgent`** (agent.py)
 - Individual agent logic and state transitions
 - Movement and neighbor detection
 - Economic actions (earning, spending)
+- Implements radius-2 square influence for worker transitions in [`agent.WorkerAgent.step`](agent.py)
 
 ### Running Batch Experiments
 
