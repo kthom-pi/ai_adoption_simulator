@@ -593,7 +593,7 @@ To add new agent types or behaviors:
 4. Add data collectors in `model.py`
 
 ## Contributing
-Contributions welcome! Please open issues for bugs or feature requests.
+Contributions welcome!
 
 ## License
 MIT License - See LICENSE file for details
