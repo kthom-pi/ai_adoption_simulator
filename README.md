@@ -9,6 +9,9 @@ An agent-based model exploring the economic dynamics of AI and automation adopti
 
 This simulation models how AI and automation technologies spread through an economy, affecting workers, wages, and wealth distribution. Agents represent economic units that can transition between different states (human workers, AI-augmented workers, fully automated capital, displaced workers, or UBI recipients) based on their neighbors and economic conditions.
 
+## Preview
+https://github.com/user-attachments/assets/3c9b5688-be7b-4da4-aac4-b3c179dc5846
+
 ## Table of Contents
 - [Installation](#installation)
 - [Quick Start](#quick-start)
